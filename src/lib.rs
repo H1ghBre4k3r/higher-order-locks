@@ -143,11 +143,100 @@ impl<T> Lock<T, Client, NotAcquired> {
     }
 }
 
-impl<T, A, B> Lock<T, A, B>
+pub trait Forkable<T, PassedReference, PassedStatus, ReturnedReference, ReturnedStatus>
 where
     T: Send + 'static,
 {
-    pub async fn fork<Func, Ret>(self, closure: Func) -> Lock<T, A, B>
+    fn fork<Func, Ret>(
+        self,
+        closure: Func,
+    ) -> impl Future<Output = Lock<T, ReturnedReference, ReturnedStatus>>
+    where
+        Func: (Fn(Lock<T, PassedReference, PassedStatus>) -> Ret) + Sync + Send + 'static,
+        Ret: Future<Output = ()> + Send + 'static;
+}
+
+impl<T> Forkable<T, Client, NotAcquired, Client, NotAcquired> for Lock<T, Client, NotAcquired>
+where
+    T: Send + 'static,
+{
+    async fn fork<Func, Ret>(self, closure: Func) -> Lock<T, Client, NotAcquired>
+    where
+        Func: (Fn(Lock<T, Client, NotAcquired>) -> Ret) + Sync + Send + 'static,
+        Ret: Future<Output = ()> + Send + 'static,
+    {
+        let Lock {
+            inner,
+            notify,
+            clients,
+            ..
+        } = self;
+
+        let new_lock = Lock {
+            inner: inner.clone(),
+            notify: notify.clone(),
+            clients: clients.clone(),
+            phantom_data: PhantomData,
+        };
+
+        {
+            *clients.lock().await += 1;
+        }
+
+        spawn(async move { closure(new_lock).await });
+
+        Lock {
+            inner,
+            phantom_data: PhantomData,
+            notify,
+            clients,
+        }
+    }
+}
+
+impl<T> Forkable<T, Owner, NotAcquired, Client, NotAcquired> for Lock<T, Owner, NotAcquired>
+where
+    T: Send + 'static,
+{
+    async fn fork<Func, Ret>(self, closure: Func) -> Lock<T, Client, NotAcquired>
+    where
+        Func: (Fn(Lock<T, Owner, NotAcquired>) -> Ret) + Sync + Send + 'static,
+        Ret: Future<Output = ()> + Send + 'static,
+    {
+        let Lock {
+            inner,
+            notify,
+            clients,
+            ..
+        } = self;
+
+        let new_lock = Lock {
+            inner: inner.clone(),
+            notify: notify.clone(),
+            clients: clients.clone(),
+            phantom_data: PhantomData,
+        };
+
+        {
+            *clients.lock().await += 1;
+        }
+
+        spawn(async move { closure(new_lock).await });
+
+        Lock {
+            inner,
+            phantom_data: PhantomData,
+            notify,
+            clients,
+        }
+    }
+}
+
+impl<T> Forkable<T, Client, NotAcquired, Owner, NotAcquired> for Lock<T, Owner, NotAcquired>
+where
+    T: Send + 'static,
+{
+    async fn fork<Func, Ret>(self, closure: Func) -> Lock<T, Owner, NotAcquired>
     where
         Func: (Fn(Lock<T, Client, NotAcquired>) -> Ret) + Sync + Send + 'static,
         Ret: Future<Output = ()> + Send + 'static,
