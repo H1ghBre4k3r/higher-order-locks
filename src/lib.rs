@@ -40,6 +40,7 @@ impl<T, A> Lock<T, A>
 where
     T: Clone,
 {
+    #[must_use]
     pub async fn acquire(self) -> (AcquiredLock<T, A>, T) {
         let Lock {
             inner,
@@ -63,21 +64,25 @@ where
         )
     }
 
+    #[must_use]
     pub async fn get(self) -> (Lock<T, A>, T) {
         let (lock, value) = self.acquire().await;
         (lock.release(value.clone()).await, value)
     }
 
+    #[must_use]
     pub async fn set(self, value: T) -> Lock<T, A> {
         let (lock, _) = self.acquire().await;
         lock.release(value).await
     }
 
+    #[must_use]
     pub async fn exchange(self, value: T) -> (Lock<T, A>, T) {
         let (lock, old) = self.acquire().await;
         (lock.release(value).await, old)
     }
 
+    #[must_use]
     pub async fn modify(self, modifier: &dyn Fn(T) -> T) -> Lock<T, A> {
         let (lock, value) = self.acquire().await;
 
@@ -86,6 +91,7 @@ where
 }
 
 impl<T, A> AcquiredLock<T, A> {
+    #[must_use]
     pub async fn release(self, value: T) -> Lock<T, A> {
         let AcquiredLock {
             inner,
@@ -107,6 +113,7 @@ impl<T, A> AcquiredLock<T, A> {
 }
 
 impl<T> AcquiredLock<T, Owner> {
+    #[must_use]
     pub async fn new() -> AcquiredLock<T, Owner> {
         let notify = Notify::new();
 
@@ -124,6 +131,7 @@ impl<T> AcquiredLock<T, Owner> {
 }
 
 impl<T> Lock<T, Owner> {
+    #[must_use]
     pub async fn wait(self) -> T {
         let Lock {
             inner,
@@ -142,6 +150,7 @@ impl<T> Lock<T, Owner> {
         }
     }
 
+    #[must_use]
     pub async fn rev(value: T) -> Lock<T, Owner> {
         let lock = AcquiredLock::new().await.release(value).await;
         lock.notify.notify_one();
@@ -168,6 +177,7 @@ pub trait Forkable<T, PassedLock, ReturnedLock>
 where
     T: Send + 'static,
 {
+    #[must_use]
     fn fork<Func, Ret>(self, closure: Func) -> impl Future<Output = ReturnedLock>
     where
         Func: (Fn(PassedLock) -> Ret) + Sync + Send + 'static,
@@ -525,5 +535,38 @@ where
             clients,
             phantom_data: PhantomData,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::test;
+
+    use crate::{AcquiredLock, Lock, Owner};
+
+    #[test]
+    async fn test_new() {
+        let _ = AcquiredLock::<i32, Owner>::new().await;
+    }
+
+    #[test]
+    async fn test_release() {
+        let lock = AcquiredLock::<i32, Owner>::new().await;
+        let _ = lock.release(42).await;
+    }
+
+    #[test]
+    async fn test_acquire() {
+        let lock = AcquiredLock::<i32, Owner>::new().await;
+        let lock = lock.release(42).await;
+        let (_, v) = lock.acquire().await;
+        assert_eq!(v, 42);
+    }
+
+    #[test]
+    async fn test_rev() {
+        let lock = Lock::rev(42).await;
+        let (_, v) = lock.acquire().await;
+        assert_eq!(v, 42);
     }
 }
